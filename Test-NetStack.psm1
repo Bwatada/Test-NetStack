@@ -125,8 +125,11 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqIPTarget'   , position = 1)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes'   , position = 1)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesIPTarget', position = 1)]
-        [ValidateSet('1', '2', '3', '4', '5', '6')]
-        [Int32[]] $Stage = @('1', '2', '3', '4', '5', '6'),
+        # [ValidateSet('1', '2', '3', '4', '5', '6')]
+        # [Int32[]] $Stage = @('1', '2', '3', '4', '5', '6'),
+
+        [ValidateSet('7')]
+        [Int32[]] $Stage = @('7'),
 
         [Parameter(Mandatory = $false, ParameterSetName = 'FullNodeMap', position = 2)]
         [Parameter(Mandatory = $false, ParameterSetName = 'IPAddress'  , position = 2)]
