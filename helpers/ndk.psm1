@@ -420,13 +420,13 @@ function Invoke-NDKPerfNto1P {
             $ServerSuccess = $ServerSuccess -and ($ServerBytesPerSecond -gt $MinAcceptableLinkSpeedBps)
             $AllJobs = $AllJobs -ne $thisJob
             Write-Host $($null -ne $AllJobs)
-            
+            Write-Host ":: Stage $thisStage : $([System.DateTime]::Now) :: [Completed] $($thisSource) -> ($thisReceiverHostName) $($thisTarget)"
         }
     }
     $RunspacePool.Close()
     $RunspacePool.Dispose()
     Start-Sleep -Seconds 20
-    Write-Host ":: Stage $thisStage : $([System.DateTime]::Now) :: [Completed] $($thisSource) -> ($thisReceiverHostName) $($thisTarget)"
+
    
     $RawData = New-Object -TypeName psobject
     $RawData | Add-Member -MemberType NoteProperty -Name ServerBytesPerSecond -Value $ServerBpsArray
