@@ -366,6 +366,7 @@ function Invoke-NDKPerfNto1P {
     While ($null -ne $AllJobs) {
         $AllJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
             $thisJob = $_
+            Write-Host ($thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)).ServerCounter
             $read = Receive-Job ($thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)).ServerCounter
             if ($read.Readings) {
                 $FlatServerOutput = $read.Readings.split(":") | ForEach-Object {
@@ -382,8 +383,6 @@ function Invoke-NDKPerfNto1P {
             Write-Host ":: Stage $thisStage : $([System.DateTime]::Now) :: [Completed] $($thisSource) -> ($thisReceiverHostName) $($thisTarget)"
         }
     }
-    $RunspacePool.Close()
-    $RunspacePool.Dispose()
     Start-Sleep -Seconds 20
 
    
