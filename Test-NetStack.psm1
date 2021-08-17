@@ -891,8 +891,6 @@ Function Test-NetStack {
             Write-Host "Completed Stage: $thisStage - RDMA Perf N:1 - $([System.DateTime]::Now)"
         }
 
-    }
-
     '7' { # RDMA Stress N:1P
             if ( $ContinueOnFailure -eq $false ) {
                 if ('fail' -in $NetStackResults.Stage3.PathStatus -or 'fail' -in $NetStackResults.Stage4.PathStatus) {
@@ -946,6 +944,9 @@ Function Test-NetStack {
             Write-Host "Completed Stage: $thisStage - RDMA Perf N:1 - $([System.DateTime]::Now)"
         }
 
+    }
+
+    
 
     if ($StageFailures -gt 0) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name NetStack -Value 'Fail' }
     else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name NetStack -Value 'Pass' }
