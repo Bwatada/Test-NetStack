@@ -345,7 +345,7 @@ function Invoke-NDKPerfNto1P {
             $Result = New-Object -TypeName psobject
             $Result | Add-Member -MemberType NoteProperty -Name ServerCounter -Value $ServerCounter
 
-            return Result
+            return $Result
         })
         
         $param = @{
