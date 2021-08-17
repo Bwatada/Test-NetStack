@@ -288,6 +288,156 @@ function Invoke-NDKPerfNto1 {
     Return $NDKPerfNto1Results
 }
 
+function Invoke-NDKPerfNto1P {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, Position=0)]
+        [PSObject] $Server,
+
+        [Parameter(Mandatory=$true, Position=1)]
+        [PSObject] $ClientNetwork,
+
+        [Parameter(Mandatory=$true, Position=2)]
+        [int] $ExpectedTPUT
+    )
+
+    $NDKPerfNto1Results = New-Object -TypeName psobject
+    $ClientNetworksTested = @()
+    $NClientResults = @()
+    $ResultString = ""
+    $ExpectedTPUTDec = $ExpectedTPUT / 100
+    
+    Write-Host ":: $([System.DateTime]::Now) :: Testing N -> Interface $($Server.InterfaceIndex) ($($Server.IPAddress))"
+    
+    $j = 9000
+    $ServerSuccess = $True
+    $MultiClientSuccess = $True
+
+    $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $Max, $ISS, $host)
+    $RunspacePool.Open()
+    $AllJobs = @()
+    $ClientNetwork | ForEach-Object {
+
+        $PowerShell = [powershell]::Create()
+        $PowerShell.RunspacePool = $RunspacePool
+
+        [void] $PowerShell.AddScript({
+            param ( $j, $Server, $thisClient )
+            Start-Sleep -Seconds 1
+            $ClientName = $thisClient.NodeName
+            $ClientIP = $thisClient.IPAddress
+            $ClientIF = $thisClient.InterfaceIndex
+            $ClientInterfaceDescription = $thisClient.InterfaceDescription
+            $ClientLinkSpeedBps = [Int]::Parse($thisClient.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
+            $ServerLinkSpeedBps = [Int]::Parse($Server.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
+
+            $ServerCounter = Start-Job `
+            -ScriptBlock {
+                param([string]$ServerName,[string]$ServerInterfaceDescription)
+                Get-Counter -ComputerName $ServerName -Counter "\RDMA Activity($ServerInterfaceDescription)\RDMA Inbound Bytes/sec" -MaxSamples 20 #-ErrorAction Ignore
+            } `
+            -ArgumentList $Server.NodeName,$Server.InterfaceDescription
+
+            $ServerOutput = Start-Job `
+            -ScriptBlock {
+                param([string]$ServerName,[string]$ServerIP,[string]$ServerIF,[int]$j)
+                Invoke-Command -ComputerName $ServerName `
+                -ScriptBlock {
+                    param([string]$ServerIP,[string]$ServerIF,[int]$j)
+                    cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j  -ServerIf $ServerIF -TestType rperf -W 20 2>&1" 
+                } `
+                -ArgumentList $ServerIP,$ServerIF,$j
+            } `
+            -ArgumentList $Server.NodeName,$Server.IPAddress,$Server.InterfaceIndex,$j
+
+            $ClientCounter = Start-Job `
+            -ScriptBlock {
+                param([string]$ClientName,[string]$ClientInterfaceDescription)
+                Get-Counter -ComputerName $ClientName -Counter "\RDMA Activity($ClientInterfaceDescription)\RDMA Outbound Bytes/sec" -MaxSamples 20
+            } `
+            -ArgumentList $ClientName,$ClientInterfaceDescription
+
+            $ClientOutput = Start-Job `
+            -ScriptBlock {
+                param([string]$ClientName,[string]$ServerIP,[string]$ClientIP,[string]$ClientIF,[int]$j)
+                Invoke-Command -Computername $ClientName `
+                -ScriptBlock {
+                    param([string]$ServerIP,[string]$ClientIP,[string]$ClientIF,[int]$j)
+                    cmd /c "NdkPerfCmd.exe -C -ServerAddr  $($ServerIP):$j -ClientAddr $($ClientIP) -ClientIf $($ClientIF) -TestType rperf 2>&1" 
+                } `
+                -ArgumentList $ServerIP,$ClientIP,$ClientIF,$j
+            } `
+            -ArgumentList $ClientName,$Server.IPAddress,$ClientIP,$ClientIF,$j
+
+            Start-Sleep -Seconds 1
+            $Result = New-Object -TypeName psobject
+            $Result | Add-Member -MemberType NoteProperty -Name ServerCounter -Value $ServerCounter
+            $Result | Add-Member -MemberType NoteProperty -Name ServerOutput -Value $ServerOutput
+            $Result | Add-Member -MemberType NoteProperty -Name ClientCounter -Value $ClientCounter
+            $Result | Add-Member -MemberType NoteProperty -Name ClientOutput -Value $ClientOutput
+
+            return Result
+        })
+        
+        $param = @{
+            j = $j
+            Server = $Server
+            thisClient = $_
+        }
+
+        [void] $PowerShell.AddParameters($param)
+
+        $asyncJobObj = @{ JobHandle   = $PowerShell
+            AsyncHandle = $PowerShell.BeginInvoke() }
+
+        $AllJobs += $asyncJobObj
+        $j++
+    }
+                        
+
+    While ($AllJobs -ne $null) {
+        $AllJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
+            $thisJob = $_
+            $ServerCounter += ($thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)).ServerCounter
+
+            $AllJobs = $AllJobs -ne $thisJob
+
+            Write-Host ":: Stage $thisStage : $([System.DateTime]::Now) :: [Completed] $($thisSource) -> ($thisReceiverHostName) $($thisTarget)"
+        }
+    }
+    Start-Sleep -Seconds 20
+
+    $ServerBytesPerSecond = 0
+    $ServerBpsArray = @()
+    $ServerGbpsArray = @()
+    $MinAcceptableLinkSpeedBps = ($ServerLinkSpeedBps, $ClientLinkSpeedBps | Measure-Object -Minimum).Minimum * $ExpectedTPUTDec
+    $ServerCounter | ForEach-Object {
+                            
+        $read = Receive-Job $_
+        if ($read.Readings) {
+            $FlatServerOutput = $read.Readings.split(":") | ForEach-Object {
+                try {[uint64]($_)} catch{}
+            }
+        }
+        $ServerBytesPerSecond = ($FlatServerOutput | Measure-Object -Maximum).Maximum
+        $ServerBpsArray += $ServerBytesPerSecond
+        $ServerGbpsArray += [Math]::Round(($ServerBytesPerSecond * 8) * [Math]::Pow(10, -9), 2)
+        $ServerSuccess = $ServerSuccess -and ($ServerBytesPerSecond -gt $MinAcceptableLinkSpeedBps)
+    }
+
+    $RawData = New-Object -TypeName psobject
+    $RawData | Add-Member -MemberType NoteProperty -Name ServerBytesPerSecond -Value $ServerBpsArray
+    $RawData | Add-Member -MemberType NoteProperty -Name MinLinkSpeedBps -Value $MinAcceptableLinkSpeedBps
+
+    $ReceiverLinkSpeedGbps = [Math]::Round(($ServerLinkSpeedBps * 8) * [Math]::Pow(10, -9), 2)
+
+    $NDKPerfNto1Results | Add-Member -MemberType NoteProperty -Name ReceiverLinkSpeedGbps -Value $ReceiverLinkSpeedGbps
+    $NDKPerfNto1Results | Add-Member -MemberType NoteProperty -Name RxGbps -Value $ServerGbpsArray
+    $NDKPerfNto1Results | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $ClientNetwork.IPAddress
+    $NDKPerfNto1Results | Add-Member -MemberType NoteProperty -Name ServerSuccess -Value $ServerSuccess
+    $NDKPerfNto1Results | Add-Member -MemberType NoteProperty -Name RawData -Value $RawData
+    Return $NDKPerfNto1Results
+}
 
 function Invoke-NDKPerfNtoN {
     [CmdletBinding()]
