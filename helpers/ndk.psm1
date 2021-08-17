@@ -343,36 +343,23 @@ function Invoke-NDKPerfNto1P {
                 -ArgumentList $Server.NodeName,$Server.InterfaceDescription
             } catch { throw $_.exception.message}
 
-            # $ServerOutput = Start-Job `
-            # -ScriptBlock {
-            #     param([string]$ServerName,[string]$ServerIP,[string]$ServerIF,[int]$j)
-            #     Invoke-Command -ComputerName $ServerName `
-            #     -ScriptBlock {
-            #         param([string]$ServerIP,[string]$ServerIF,[int]$j)
-            #         cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j  -ServerIf $ServerIF -TestType rperf -W 20 2>&1" 
-            #     } `
-            #     -ArgumentList $ServerIP,$ServerIF,$j
-            # } `
-            # -ArgumentList $Server.NodeName,$Server.IPAddress,$Server.InterfaceIndex,$j
+            $ServerOutput = 
+                Invoke-Command -ComputerName $Server.NodeName `
+                    param([string]$ServerIP,[string]$ServerIF,[int]$j)
+                    cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j  -ServerIf $ServerIF -TestType rperf -W 20 2>&1" 
+                `
+                -ArgumentList $Server.IPAddress,$Server.InterfaceIndex,$j
 
-            # $ClientCounter = Start-Job `
-            # -ScriptBlock {
-            #     param([string]$ClientName,[string]$ClientInterfaceDescription)
-            #     Get-Counter -ComputerName $ClientName -Counter "\RDMA Activity($ClientInterfaceDescription)\RDMA Outbound Bytes/sec" -MaxSamples 20
-            # } `
-            # -ArgumentList $ClientName,$ClientInterfaceDescription
+            $ClientCounter = Start-Job `
+                param([string]$ClientName,[string]$ClientInterfaceDescription)
+                Get-Counter -ComputerName $ClientName -Counter "\RDMA Activity($ClientInterfaceDescription)\RDMA Outbound Bytes/sec" -MaxSamples 20
+            `
 
-            # $ClientOutput = Start-Job `
-            # -ScriptBlock {
-            #     param([string]$ClientName,[string]$ServerIP,[string]$ClientIP,[string]$ClientIF,[int]$j)
-            #     Invoke-Command -Computername $ClientName `
-            #     -ScriptBlock {
-            #         param([string]$ServerIP,[string]$ClientIP,[string]$ClientIF,[int]$j)
-            #         cmd /c "NdkPerfCmd.exe -C -ServerAddr  $($ServerIP):$j -ClientAddr $($ClientIP) -ClientIf $($ClientIF) -TestType rperf 2>&1" 
-            #     } `
-            #     -ArgumentList $ServerIP,$ClientIP,$ClientIF,$j
-            # } `
-            # -ArgumentList $ClientName,$Server.IPAddress,$ClientIP,$ClientIF,$j
+            $ClientOutput = Invoke-Command -Computername $ClientName `
+                    param([string]$Server.IPAddress,[string]$ClientIP,[string]$ClientIF,[int]$j)
+                    cmd /c "NdkPerfCmd.exe -C -ServerAddr  $($Server.IPAddress):$j -ClientAddr $($ClientIP) -ClientIf $($ClientIF) -TestType rperf 2>&1" 
+                -ArgumentList $ServerIP,$ClientIP,$ClientIF,$j
+            `
 
             Start-Sleep -Seconds 1
             $Result = New-Object -TypeName psobject
@@ -380,9 +367,9 @@ function Invoke-NDKPerfNto1P {
             $Result | Add-Member -MemberType NoteProperty -Name thisSource -Value $Server.NodeName
             $Result | Add-Member -MemberType NoteProperty -Name thisReceiverHostName -Value $thisClient.NodeName
             
-            # $Result | Add-Member -MemberType NoteProperty -Name ServerOutput -Value $ServerOutput
-            # $Result | Add-Member -MemberType NoteProperty -Name ClientCounter -Value $ClientCounter
-            # $Result | Add-Member -MemberType NoteProperty -Name ClientOutput -Value $ClientOutput
+            $Result | Add-Member -MemberType NoteProperty -Name ServerOutput -Value $ServerOutput
+            $Result | Add-Member -MemberType NoteProperty -Name ClientCounter -Value $ClientCounter
+            $Result | Add-Member -MemberType NoteProperty -Name ClientOutput -Value $ClientOutput
 
             return $Result
         })
