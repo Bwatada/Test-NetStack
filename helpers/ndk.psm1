@@ -332,12 +332,14 @@ function Invoke-NDKPerfNto1P {
             $ClientLinkSpeedBps = [Int]::Parse($thisClient.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
             $ServerLinkSpeedBps = [Int]::Parse($Server.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
 
-            $ServerCounter = Start-Job `
-            -ScriptBlock {
-                param([string]$ServerName,[string]$ServerInterfaceDescription)
-                Get-Counter -ComputerName $ServerName -Counter "\RDMA Activity($ServerInterfaceDescription)\RDMA Inbound Bytes/sec" -MaxSamples 20 #-ErrorAction Ignore
-            } `
-            -ArgumentList $Server.NodeName,$Server.InterfaceDescription
+            try {
+                $ServerCounter = Start-Job `
+                -ScriptBlock {
+                    param([string]$ServerName,[string]$ServerInterfaceDescription)
+                    Get-Counter -ComputerName $ServerName -Counter "\RDMA Activity($ServerInterfaceDescription)\RDMA Inbound Bytes/sec" -MaxSamples 20 #-ErrorAction Ignore
+                } `
+                -ArgumentList $Server.NodeName,$Server.InterfaceDescription
+            } catch { throw $_.exception.message}
 
             $ServerOutput = Start-Job `
             -ScriptBlock {
@@ -373,9 +375,6 @@ function Invoke-NDKPerfNto1P {
             Start-Sleep -Seconds 1
             $Result = New-Object -TypeName psobject
             $Result | Add-Member -MemberType NoteProperty -Name ServerCounter -Value $ServerCounter
-            $Result | Add-Member -MemberType NoteProperty -Name ServerOutput -Value $ServerOutput
-            $Result | Add-Member -MemberType NoteProperty -Name ClientCounter -Value $ClientCounter
-            $Result | Add-Member -MemberType NoteProperty -Name ClientOutput -Value $ClientOutput
 
             return Result
         })
@@ -396,7 +395,7 @@ function Invoke-NDKPerfNto1P {
     }
                         
 
-    While ($AllJobs -ne $null) {
+    While ($null -ne $AllJobs) {
         $AllJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
             $thisJob = $_
             $ServerCounter += ($thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)).ServerCounter
@@ -406,6 +405,8 @@ function Invoke-NDKPerfNto1P {
             Write-Host ":: Stage $thisStage : $([System.DateTime]::Now) :: [Completed] $($thisSource) -> ($thisReceiverHostName) $($thisTarget)"
         }
     }
+    $RunspacePool.Close()
+    $RunspacePool.Dispose()
     Start-Sleep -Seconds 20
 
     $ServerBytesPerSecond = 0

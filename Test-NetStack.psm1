@@ -884,66 +884,12 @@ Function Test-NetStack {
             }
 
             if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage5 -Value 'Fail'; $StageFailures++ }
-            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage5 -Value 'Pass' }
+            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Pass' }
 
-            $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage5 -Value $StageResults
-
-            Write-Host "Completed Stage: $thisStage - RDMA Perf N:1 - $([System.DateTime]::Now)"
-        }
-
-    '7' { # RDMA Stress N:1P
-            if ( $ContinueOnFailure -eq $false ) {
-                if ('fail' -in $NetStackResults.Stage3.PathStatus -or 'fail' -in $NetStackResults.Stage4.PathStatus) {
-
-                    $Stage -ge 5 | ForEach-Object {
-                        $AbortedStage = $_
-                        $NetStackResults | Add-Member -MemberType NoteProperty -Name "Stage$AbortedStage" -Value 'Aborted'; $StageFailures++
-                    }
-
-                    Write-Warning 'Aborted due to failures in earlier stage(s). To continue despite failures, use the ContinueOnFailure parameter.'
-                    return $NetStackResults
-                }
-            }
-
-            $thisStage = $_
-            Write-Host "Beginning Stage: $thisStage - RDMA Perf N:1 - $([System.DateTime]::Now)"
-
-            $StageResults = @()
-            $TestableNetworks | ForEach-Object {
-                $thisTestableNet = $_
-
-                $thisTestableNet.Group | Where-Object -FilterScript { $_.RDMAEnabled } | ForEach-Object {
-                    $thisSource = $_
-                    $ClientNetwork = @($thisTestableNet.Group | Where-Object NodeName -ne $thisSource.NodeName | Where-Object -FilterScript { $_.RDMAEnabled })
-
-                    $thisSourceResult = Invoke-NDKPerfNto1P -Server $thisSource -ClientNetwork $ClientNetwork -ExpectedTPUT $Definitions.NDKPerf.TPUT
-
-                    $Result = New-Object -TypeName psobject
-                    $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
-                    $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
-
-                    $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
-                    $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
-
-                    if ($thisSourceResult.ServerSuccess) { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass' }
-                    else { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' }
-
-                    $Result | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $thisSourceResult.ClientNetworkTested
-                    $Result | Add-Member -MemberType NoteProperty -Name RawData -Value $thisSourceResult.RawData
-
-                    $StageResults += $Result
-                    Remove-Variable Result -ErrorAction SilentlyContinue
-                }
-            }
-
-            if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage5 -Value 'Fail'; $StageFailures++ }
-            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage5 -Value 'Pass' }
-
-            $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage5 -Value $StageResults
+            $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage7 -Value $StageResults
 
             Write-Host "Completed Stage: $thisStage - RDMA Perf N:1 - $([System.DateTime]::Now)"
         }
-
     }
 
     
