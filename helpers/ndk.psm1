@@ -312,7 +312,8 @@ function Invoke-NDKPerfNto1P {
     $j = 9000
     $ServerSuccess = $True
     $MultiClientSuccess = $True
-
+    $ISS = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+    $Max = [int]$env:NUMBER_OF_PROCESSORS * 2
     $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $Max, $ISS, $host)
     $RunspacePool.Open()
     $AllJobs = @()
