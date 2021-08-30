@@ -370,6 +370,29 @@ Function Get-DisqualifiedNetworksFromMapping {
     Return $Disqualified
 }
 
+Function Get-VDiskStatus {
+    param ( $LogFile )
+
+    $Unhealthy = $false
+    $UnhealthyDisks = @()
+    Write-Host "Getting Virtual Disk Health..."
+    "Getting Virtual Disk Health..." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+    Get-VirtualDisk | ForEach-Object {
+        if($_.HealthStatus -eq 'Unhealthy'){
+            $Unhealthy = $true
+            $UnhealthyDisks += $_.FriendlyName
+        } 
+    }
+    if($Unhealthy) { 
+        Write-Host "$(UnhealthyDisks) are unhealthy." 
+        "$(UnhealthyDisks) are unhealthy." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+    }  
+    else { 
+        Write-Host "All virtual disks are healthy."
+        "All virtual disks are healthy." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+    }  
+}
+
 Function Get-RunspaceGroups {
     param ( $TestableNetworks )
     # create list of all valid source->target pairs

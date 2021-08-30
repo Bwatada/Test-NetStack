@@ -891,6 +891,8 @@ Function Test-NetStack {
             $NetStackHelperModules = Get-ChildItem (Join-Path -Path $PSScriptRoot -ChildPath 'Helpers\*') -Include '*.psm1'
             $NetStackHelperModules | ForEach-Object { $ISS.ImportPSModule($_.FullName) }
 
+            Get-VDiskStatus($LogFile)
+
             $NodeGroups | ForEach-Object {
                 $GroupedJobs = @()            
                 $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $ISS, $host)
@@ -908,8 +910,19 @@ Function Test-NetStack {
                         Write-Host ":: $([System.DateTime]::Now) :: [Started] N -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
                         ":: $([System.DateTime]::Now) :: [Started] N -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
+                        $StartTime = Get-Date
                         $thisSourceResult = Invoke-NDKPerfNto1 -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
-                       
+                        $EndTime = Get-Date
+
+                        $events = (Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ComputerName $thisSource.NodeName)
+
+                        if($events) { 
+                            Write-Host "Caught errors on node $($thisSource.NodeName)."
+                            "Caught errors on node $($thisSource.NodeName)." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                            $events | Select-Object Time, EntryType, InstanceID, Message | Format-Table -AutoSize | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                            
+                        }
+
                         $Result = New-Object -TypeName psobject
                         $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
                         $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
@@ -957,6 +970,8 @@ Function Test-NetStack {
                 $RunspacePool.Dispose()
                 
             }
+
+            Get-VDiskStatus($LogFile)
 
             if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Fail'; $StageFailures++ }
                 else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Pass' }
