@@ -386,10 +386,12 @@ Function Get-VDiskStatus {
     if($Unhealthy) { 
         Write-Host "$(UnhealthyDisks) are unhealthy." 
         "$(UnhealthyDisks) are unhealthy." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+        return $true
     }  
     else { 
         Write-Host "All virtual disks are healthy."
         "All virtual disks are healthy." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+        return $false
     }  
 }
 
