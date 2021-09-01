@@ -924,7 +924,7 @@ Function Test-NetStack {
                         $thisSourceResult = Invoke-NDKPerfNto1 -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
                         $EndTime = Get-Date
 
-                        $events = (Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ComputerName $thisSource.NodeName)
+                        $events = (Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a)
 
                         $Result = New-Object -TypeName psobject
                         $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
@@ -933,7 +933,7 @@ Function Test-NetStack {
                         $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
 
                         if($events) { 
-                            Write-Host "Caught errors on node $($thisSource.NodeName)."
+                            Write-Host "Caught errors while testing node $($thisSource.NodeName)."
                             "Caught errors on node $($thisSource.NodeName)." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                             $events | Select-Object Time, EntryType, InstanceID, Message | Format-Table -AutoSize | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                         }
