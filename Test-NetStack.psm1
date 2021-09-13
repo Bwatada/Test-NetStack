@@ -1011,6 +1011,110 @@ Function Test-NetStack {
                 $StageResults | Select-Object -Property * -ExcludeProperty RawData | ft * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                 "####################################`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
         }
+
+        '8' { # UDP Stress N:1
+            if ( $ContinueOnFailure -eq $false ) {
+                if ('fail' -in $NetStackResults.Stage3.PathStatus -or 'fail' -in $NetStackResults.Stage4.PathStatus -or 'fail' -in $NetStackResults.Stage5.ReceiverStatus -or 'fail' -in $NetStackResults.Stage6.NetworkStatus) {
+    
+                    $Stage -ge 8 | ForEach-Object {
+                        $AbortedStage = $_
+                        $NetStackResults | Add-Member -MemberType NoteProperty -Name "Stage$AbortedStage" -Value 'Aborted'; $StageFailures++
+                    }
+    
+                    Write-Warning 'Aborted due to failures in earlier stage(s). To continue despite failures, use the ContinueOnFailure parameter.'
+                    return $NetStackResults
+                }
+            }
+
+            $NodeGroups = $Mapping | Where-Object VLAN -ne 'Unsupported' | Group-Object NodeName
+            $thisStage = $_
+            Write-Host "Beginning Stage: $thisStage - UDP Traffic Stress Test - $([System.DateTime]::Now)"
+            "Stage 8`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            "Console Output" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            "Beginning Stage: $thisStage - UDP Traffic Stress Test - $([System.DateTime]::Now)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+
+            $StageResults = @()
+            $ISS = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+            $NetStackHelperModules = Get-ChildItem (Join-Path -Path $PSScriptRoot -ChildPath 'Helpers\*') -Include '*.psm1'
+            $NetStackHelperModules | ForEach-Object { $ISS.ImportPSModule($_.FullName) }
+
+            $NodeGroups | ForEach-Object {
+                $GroupedJobs = @()            
+                $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $ISS, $host)
+                $RunspacePool.Open()
+                $testNodeGroup = $_  
+                $testNodeGroup.Group | Where-Object -FilterScript { $_.RDMAEnabled } | ForEach-Object {
+                    
+                    $thisSource  = $_
+                    $PowerShell = [powershell]::Create()
+                    $PowerShell.RunspacePool = $RunspacePool
+                    $ClientNodes = @($Mapping | Where-Object NodeName -ne $thisSource.NodeName | Where-Object VLAN -eq $thisSource.VLAN | Where-Object Subnet -eq $thisSource.Subnet | Where-Object -FilterScript { $_.RDMAEnabled })
+                    
+                    [void] $PowerShell.AddScript({
+                        param ( $thisSource, $ClientNodes, $Definitions, $LogFile )
+                        Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
+                        ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+
+                        $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
+                       
+                        $Result = New-Object -TypeName psobject
+                        $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
+                        $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
+                        $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
+                        $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
+        
+                        if ($thisSourceResult.ServerSuccess) { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass' }
+                        else { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' }
+        
+                        $Result | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $thisSourceResult.ClientNetworkTested
+                        $Result | Add-Member -MemberType NoteProperty -Name RawData -Value $thisSourceResult.RawData
+                        
+                        Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
+                        ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                        
+                        return $Result
+                    })
+
+                    $param = @{
+                        thisSource = $thisSource
+                        ClientNodes = $ClientNodes
+                        Definitions = $Definitions
+                        LogFile = $LogFile
+                    }
+
+                    [void] $PowerShell.AddParameters($param)
+
+                    $asyncJobObj = @{ JobHandle   = $PowerShell
+                        AsyncHandle = $PowerShell.BeginInvoke() }
+
+                    $GroupedJobs += $asyncJobObj 
+                
+                }
+
+                While ($null -ne $GroupedJobs) {
+                    $GroupedJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
+                        $thisJob = $_
+                        $StageResults += $thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)
+                        
+                        $GroupedJobs = $GroupedJobs | Where-Object { $_ -ne $thisJob }
+                    }
+                }
+
+                $RunspacePool.close()
+                $RunspacePool.Dispose()
+                
+            }
+
+            if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Fail'; $StageFailures++ }
+            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Pass' }
+            
+            $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage7 -Value $StageResults
+            Write-Host "Completed Stage: $thisStage - RDMA Perf VMSwitch Stress - $([System.DateTime]::Now)`r`n"
+            "Completed Stage: $thisStage - RDMA Perf VMSwitch Stress - $([System.DateTime]::Now)`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            "Stage 8 Results" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            $StageResults | Select-Object -Property * -ExcludeProperty RawData | ft * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            "####################################`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+        }
     }
 
     if ($StageFailures -gt 0) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name NetStack -Value 'Fail' }
