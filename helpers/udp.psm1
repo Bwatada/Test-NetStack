@@ -32,33 +32,33 @@ function Invoke-UDPBlast {
         $ServerLinkSpeedBps = [Int]::Parse($Server.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
 
         $ServerCounter += Start-Job -ScriptBlock {
-            param ([string] $ServerName, [string] $ServerInterfaceDescription)
-
-            Get-Counter -ComputerName $ServerName -Counter "\RDMA Activity($ServerInterfaceDescription)\RDMA Inbound Bytes/sec" -MaxSamples 20 #-ErrorAction Ignore
-        } -ArgumentList $Server.NodeName,$Server.InterfaceDescription
+            param ([string] $ServerName)
+            $paths = (Get-Counter -ListSet UDPv4).paths
+            Get-Counter -ComputerName $ServerName -Counter $paths -MaxSamples 20
+        } -ArgumentList $Server.NodeName,
 
         $ServerOutput += Start-Job -ScriptBlock {
-            param ([string] $ServerName, [string] $ServerIP, [string] $ServerIF, [int]$j)
+            param ([string] $ServerName, [string] $ServerIP, [int]$j)
             Invoke-Command -ComputerName $ServerName -ScriptBlock {
-                param([string]$ServerIP,[string]$ServerIF,[int]$j)
-                cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j  -ServerIf $ServerIF -TestType rperf -W 20 2>&1"
-            } -ArgumentList $ServerIP, $ServerIF, $j
-        } -ArgumentList $Server.NodeName, $Server.IPAddress, $Server.InterfaceIndex, $j
+                param([string]$ServerIP,[int]$j)
+                cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j -TestType rperf -W 20 2>&1"
+            } -ArgumentList $ServerIP, $j
+        } -ArgumentList $Server.NodeName, $Server.IPAddress, $j
 
         $ClientCounter += Start-Job -ScriptBlock {
-            param ([string] $ClientName, [string] $ClientInterfaceDescription)
-
-            Get-Counter -ComputerName $ClientName -Counter "\RDMA Activity($ClientInterfaceDescription)\RDMA Outbound Bytes/sec" -MaxSamples 20
-        } -ArgumentList $ClientName,$ClientInterfaceDescription
+            param ([string] $ClientName)
+            $paths = (Get-Counter -ListSet UDPv4).paths
+            Get-Counter -ComputerName $ClientName -Counter $paths -MaxSamples 20
+        } -ArgumentList $ClientName
 
         $ClientOutput += Start-Job -ScriptBlock {
-            param ([string] $ClientName, [string] $ServerIP, [string] $ClientIP, [string] $ClientIF, [int]$j)
+            param ([string] $ClientName, [string] $ServerIP, [string] $ClientIP, [int]$j)
 
             Invoke-Command -Computername $ClientName -ScriptBlock {
-                param ([string] $ServerIP, [string] $ClientIP, [string] $ClientIF, [int] $j)
+                param ([string] $ServerIP, [string] $ClientIP, [int] $j)
                 cmd /c "NdkPerfCmd.exe -C -ServerAddr  $($ServerIP):$j -ClientAddr $($ClientIP) -ClientIf $($ClientIF) -TestType rperf 2>&1"
-            } -ArgumentList $ServerIP,$ClientIP,$ClientIF,$j
-        } -ArgumentList $ClientName,$Server.IPAddress,$ClientIP,$ClientIF,$j
+            } -ArgumentList $ServerIP,$ClientIP,$j
+        } -ArgumentList $ClientName,$Server.IPAddress,$ClientIP,$j
 
         $j++
     }
