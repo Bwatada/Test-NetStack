@@ -125,7 +125,7 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqIPTarget'   , position = 1)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes'   , position = 1)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesIPTarget', position = 1)]
-        [ValidateSet('1', '2', '3', '4', '5', '6', '7')]
+        [ValidateSet('1', '2', '3', '4', '5', '6', '7', '8')]
         [Int32[]] $Stage = @('1', '2', '3', '4', '5', '6'),
 
         [Parameter(Mandatory = $false, ParameterSetName = 'FullNodeMap', position = 2)]
@@ -149,9 +149,24 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false)]
         [switch] $ContinueOnFailure = $false,
 
+        [Parameter(Mandatory = $false, ParameterSetName = 'FullNodeMap'          , position = 4)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'IPAddress'            , position = 4)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqNodes'      , position = 4)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqIPTarget'   , position = 4)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes'   , position = 4)]
+        [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesIPTarget', position = 4)]
+        [Switch] $Experimental = $false,
+
         [Parameter(Mandatory = $false)]
         [String] $LogPath = "$(Join-Path -Path $((Get-Module -Name Test-Netstack -ListAvailable | Select-Object -First 1).ModuleBase) -ChildPath "Results\NetStackResults-$(Get-Date -f yyyy-MM-dd-HHmmss).txt")"
     )
+    $ExperimentalStages = @('7', '8')
+    $ChosenStages = $Stages | Where-Object {$ExperimentalStages -contains $_}
+    if ($Experimental -eq $false -and $ChosenStages.Length -gt 0) {
+        Write-Error "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages."
+        "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+        return $NetStackResults
+    }
 
     $Global:ProgressPreference = 'SilentlyContinue'
 
@@ -867,6 +882,12 @@ Function Test-NetStack {
 
         '7' { # RDMA Stress N:1
 
+            if ($Experimental -eq $false) {
+                Write-Error "Stage $_ is experimental. The experimental flag has not been set. Please enable it to run experimental stages."
+                "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                return $NetStackResults
+            }
+
             $IsVDiskUnhealthy = Get-VDiskStatus($LogFile)
             if ($IsVDiskUnhealthy) { 
                 $Stage -ge 7 | ForEach-Object {
@@ -920,9 +941,7 @@ Function Test-NetStack {
                         ":: $([System.DateTime]::Now) :: [Started] N -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                         $events = @()
 
-                        $StartTime = Get-Date
                         $thisSourceResult = Invoke-NDKPerfNto1 -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
-                        $EndTime = Get-Date
 
                         $events = (Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a)
 
@@ -932,9 +951,9 @@ Function Test-NetStack {
                         $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
                         $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
 
-                        if($events) { 
+                        if ($events) { 
                             Write-Host "Caught errors while testing node $($thisSource.NodeName)."
-                            "Caught errors on node $($thisSource.NodeName)." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                            "Found Exception events when testing node $($thisSource.NodeName)." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                             $events | Select-Object Time, EntryType, InstanceID, Message | Format-Table -AutoSize | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                         }
 
