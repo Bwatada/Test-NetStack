@@ -952,8 +952,8 @@ Function Test-NetStack {
                         $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
 
                         if ($events) { 
-                            Write-Host "Found Exception events when testing node $($thisSource.NodeName)."
-                            "Found Exception events when testing node $($thisSource.NodeName)." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                            Write-Host "Found cluster membership lost events when testing node $($thisSource.NodeName). They can be found in the test log."
+                            "Found cluster membership lost events when testing node $($thisSource.NodeName). They can be found in the test log." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                             $events | Select-Object Time, EntryType, InstanceID, Message | Format-Table -AutoSize | Out-File $LogFile -Append -Encoding utf8 -Width 2000
                         }
 
