@@ -165,7 +165,7 @@ Function Test-NetStack {
     if ($Experimental -eq $false -and $ChosenStages.Length -gt 0) {
         Write-Error "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages."
         "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-        return $NetStackResults
+        break
     }
 
     $Global:ProgressPreference = 'SilentlyContinue'
