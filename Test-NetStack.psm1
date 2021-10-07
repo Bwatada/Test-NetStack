@@ -155,7 +155,12 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqIPTarget'   , position = 4)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes'   , position = 4)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesIPTarget', position = 4)]
+
         [Switch] $Experimental = $false,
+        [Parameter(Mandatory = $false)]
+        [String] $DpdkUser='',
+        [Parameter(Mandatory = $false)]
+        [String] $DpdkIp='',
 
         [Parameter(Mandatory = $false)]
         [String] $LogPath = "$(Join-Path -Path $((Get-Module -Name Test-Netstack -ListAvailable | Select-Object -First 1).ModuleBase) -ChildPath "Results\NetStackResults-$(Get-Date -f yyyy-MM-dd-HHmmss).txt")"
@@ -1013,6 +1018,19 @@ Function Test-NetStack {
         }
 
         '8' { # UDP Stress N:1
+
+            if ($Experimental -eq $false) {
+                Write-Error "Stage $_ is experimental. The experimental flag has not been set. Please enable it to run experimental stages."
+                "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                return $NetStackResults
+            }
+
+            if ($DpdkUser -eq '' -or $DpdkIp -eq '') {
+                Write-Error "Stage 8 requires a valid Linux VM to connect to and run DPDK. Please provide the IP of the vm and the username to connect with."
+                "Stage 8 requires a valid Linux VM to connect to and run DPDK. Please provide the IP of the vm and the username to connect with."  | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                return $NetStackResults
+            }
+
             if ( $ContinueOnFailure -eq $false ) {
                 if ('fail' -in $NetStackResults.Stage3.PathStatus -or 'fail' -in $NetStackResults.Stage4.PathStatus -or 'fail' -in $NetStackResults.Stage5.ReceiverStatus -or 'fail' -in $NetStackResults.Stage6.NetworkStatus) {
     
@@ -1034,73 +1052,37 @@ Function Test-NetStack {
             "Beginning Stage: $thisStage - UDP Traffic Stress Test - $([System.DateTime]::Now)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
             $StageResults = @()
-            $ISS = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
             $NetStackHelperModules = Get-ChildItem (Join-Path -Path $PSScriptRoot -ChildPath 'Helpers\*') -Include '*.psm1'
             $NetStackHelperModules | ForEach-Object { $ISS.ImportPSModule($_.FullName) }
 
             $NodeGroups | ForEach-Object {
-                $GroupedJobs = @()            
-                $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $ISS, $host)
-                $RunspacePool.Open()
                 $testNodeGroup = $_  
                 $testNodeGroup.Group | Where-Object -FilterScript { $_.RDMAEnabled } | ForEach-Object {
                     
                     $thisSource  = $_
-                    $PowerShell = [powershell]::Create()
-                    $PowerShell.RunspacePool = $RunspacePool
                     
-                    [void] $PowerShell.AddScript({
-                        param ( $thisSource, $Definitions, $LogFile )
-                        Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
-                        ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                    Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
+                    ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
-                        $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ExpectedTPUT $Definitions.NDKPerf.TPUT
-                       
-                        $Result = New-Object -TypeName psobject
-                        $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
-                        $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
-                        $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
-                        $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
-        
-                        if ($thisSourceResult.ServerSuccess) { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass' }
-                        else { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' }
-        
-                        $Result | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $thisSourceResult.ClientNetworkTested
-                        $Result | Add-Member -MemberType NoteProperty -Name RawData -Value $thisSourceResult.RawData
-                        
-                        Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
-                        ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-                        
-                        return $Result
-                    })
-
-                    $param = @{
-                        thisSource = $thisSource
-                        Definitions = $Definitions
-                        LogFile = $LogFile
-                    }
-
-                    [void] $PowerShell.AddParameters($param)
-
-                    $asyncJobObj = @{ JobHandle   = $PowerShell
-                        AsyncHandle = $PowerShell.BeginInvoke() }
-
-                    $GroupedJobs += $asyncJobObj 
-                
+                    $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ExpectedTPUT $Definitions.NDKPerf.TPUT -DpdkIp $DpdkIp -DpdkUser $DpdkUser
+                    
+                    $Result = New-Object -TypeName psobject
+                    $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
+                    $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
+                    $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
+                    $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
+    
+                    if ($thisSourceResult.ServerSuccess) { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass' }
+                    else { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' }
+    
+                    $Result | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $thisSourceResult.ClientNetworkTested
+                    $Result | Add-Member -MemberType NoteProperty -Name RawData -Value $thisSourceResult.RawData
+                    
+                    Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
+                    ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                    
+                    Write-Host $Result
                 }
-
-                While ($null -ne $GroupedJobs) {
-                    $GroupedJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
-                        $thisJob = $_
-                        $StageResults += $thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)
-                        
-                        $GroupedJobs = $GroupedJobs | Where-Object { $_ -ne $thisJob }
-                    }
-                }
-
-                $RunspacePool.close()
-                $RunspacePool.Dispose()
-                
             }
 
             if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Fail'; $StageFailures++ }
