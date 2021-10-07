@@ -1,3 +1,7 @@
+# This test requires the admin to have a DPDK enabled Linux VM setup that has pktgen installed.
+# The VM must be able to connect to each node that will be tested, and should have each node able to ssh to the VM without using a password.
+# The test will fail if a password is required to connect to the VM.  
+
 function Invoke-UDPBlast {
     [CmdletBinding()]
     param (
@@ -5,92 +9,37 @@ function Invoke-UDPBlast {
         [PSObject] $Server,
 
         [Parameter(Mandatory=$true, Position=1)]
-        [PSObject] $ClientNetwork
+        [PSObject] $DpdkUser,
+
+        [Parameter(Mandatory=$true, Position=2)]
+        [PSObject] $DpdkIp
     )
 
     $UDPBlastResults = New-Object -TypeName psobject
-    $ClientNetworksTested = @()
-    $NClientResults = @()
-    $ResultString = ""
-    $ExpectedTPUTDec = $ExpectedTPUT / 100
 
-    $j = 9000
+    $ServerCounter += Start-Job -ScriptBlock {
+        param ([string] $Server)
+        $paths = (Get-Counter -ListSet UDPv4).paths
+        Get-Counter -ComputerName $Server.NodeName -Counter $paths -MaxSamples 20
+    } -ArgumentList $Server
 
-    $ServerOutput = @()
-    $ClientOutput = @()
-    $ServerCounter = @()
-    $ClientCounter = @()
-    $ServerSuccess = $True
-    $MultiClientSuccess = $True
+    $ServerOutput += Start-Job -ScriptBlock {
+        param ([string] $Server, [string] $DpdkIp, [string] $DpdkUser)
 
-    $ClientNetwork | ForEach-Object {
-        $ClientName = $_.NodeName
-        $ClientIP = $_.IPAddress
-        $ClientIF = $_.InterfaceIndex
-        $ClientInterfaceDescription = $_.InterfaceDescription
-        $ClientLinkSpeedBps = [Int]::Parse($_.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
-        $ServerLinkSpeedBps = [Int]::Parse($Server.LinkSpeed.Split()[0]) * [Math]::Pow(10, 9) / 8
+        Invoke-Command -Computername $Server -ScriptBlock {
+            param ([string] $Server, [string] $DpdkIp, [string] $DpdkUser)
+            $Command='printf "set all proto udp\nset all size 1518\nset all dst ip $Server.IPAddress\nset all dst mac $Server.MacAddress\nset all dport 8888\n start all\ndelay 50000\nstop all\nquit" > /home/b/test.pkt.sequences.test && pktgen -l 1-2 -- -P -m "2.1" -f /home/b/test.pkt.sequences.test'
+            ssh $DpdkUser@$DpdkIp $Command
+        } -ArgumentList $Server,$ServerIP,$DpdkUser
+    } -ArgumentList $Server,$DpdkIp,$DpdkUser
 
-        $ServerCounter += Start-Job -ScriptBlock {
-            param ([string] $ServerName)
-            $paths = (Get-Counter -ListSet UDPv4).paths
-            Get-Counter -ComputerName $ServerName -Counter $paths -MaxSamples 20
-        } -ArgumentList $Server.NodeName,
-
-        $ServerOutput += Start-Job -ScriptBlock {
-            param ([string] $ServerName, [string] $ServerIP, [int]$j)
-            Invoke-Command -ComputerName $ServerName -ScriptBlock {
-                param([string]$ServerIP,[int]$j)
-                cmd /c "NdkPerfCmd.exe -S -ServerAddr $($ServerIP):$j -TestType rperf -W 20 2>&1"
-            } -ArgumentList $ServerIP, $j
-        } -ArgumentList $Server.NodeName, $Server.IPAddress, $j
-
-        $ClientCounter += Start-Job -ScriptBlock {
-            param ([string] $ClientName)
-            $paths = (Get-Counter -ListSet UDPv4).paths
-            Get-Counter -ComputerName $ClientName -Counter $paths -MaxSamples 20
-        } -ArgumentList $ClientName
-
-        $ClientOutput += Start-Job -ScriptBlock {
-            param ([string] $ClientName, [string] $ServerIP, [string] $ClientIP, [int]$j)
-
-            Invoke-Command -Computername $ClientName -ScriptBlock {
-                param ([string] $ServerIP, [string] $ClientIP, [int] $j)
-                cmd /c "NdkPerfCmd.exe -C -ServerAddr  $($ServerIP):$j -ClientAddr $($ClientIP) -ClientIf $($ClientIF) -TestType rperf 2>&1"
-            } -ArgumentList $ServerIP,$ClientIP,$j
-        } -ArgumentList $ClientName,$Server.IPAddress,$ClientIP,$j
-
-        $j++
-    }
-
-    $ServerBytesPerSecond = 0
-    $ServerBpsArray = @()
-    $ServerGbpsArray = @()
-    $MinAcceptableLinkSpeedBps = ($ServerLinkSpeedBps, $ClientLinkSpeedBps | Measure-Object -Minimum).Minimum * $ExpectedTPUTDec
-    $ServerCounter | ForEach-Object {
-        $read = Receive-Job $_ -Wait -AutoRemoveJob
-
-        if ($read.Readings) {
-            $FlatServerOutput = $read.Readings.split(":") | ForEach-Object {
-                try {[uint64]($_)} catch{}
-            }
-        }
-
-        $ServerBytesPerSecond = ($FlatServerOutput | Measure-Object -Maximum).Maximum
-        $ServerBpsArray += $ServerBytesPerSecond
-        $ServerGbpsArray += [Math]::Round(($ServerBytesPerSecond * 8) * [Math]::Pow(10, -9), 2)
-        $ServerSuccess = $ServerSuccess -and ($ServerBytesPerSecond -gt $MinAcceptableLinkSpeedBps)
-    }
+    $j++
 
     $RawData = New-Object -TypeName psobject
     $RawData | Add-Member -MemberType NoteProperty -Name ServerBytesPerSecond -Value $ServerBpsArray
     $RawData | Add-Member -MemberType NoteProperty -Name MinLinkSpeedBps -Value $MinAcceptableLinkSpeedBps
 
-    $ReceiverLinkSpeedGbps = [Math]::Round(($ServerLinkSpeedBps * 8) * [Math]::Pow(10, -9), 2)
-
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name ReceiverLinkSpeedGbps -Value $ReceiverLinkSpeedGbps
     $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RxGbps -Value $ServerGbpsArray
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $ClientNetwork.IPAddress
     $UDPBlastResults | Add-Member -MemberType NoteProperty -Name ServerSuccess -Value $ServerSuccess
     $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RawData -Value $RawData
 

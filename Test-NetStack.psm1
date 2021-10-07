@@ -1048,14 +1048,13 @@ Function Test-NetStack {
                     $thisSource  = $_
                     $PowerShell = [powershell]::Create()
                     $PowerShell.RunspacePool = $RunspacePool
-                    $ClientNodes = @($Mapping | Where-Object NodeName -ne $thisSource.NodeName | Where-Object VLAN -eq $thisSource.VLAN | Where-Object Subnet -eq $thisSource.Subnet | Where-Object -FilterScript { $_.RDMAEnabled })
                     
                     [void] $PowerShell.AddScript({
-                        param ( $thisSource, $ClientNodes, $Definitions, $LogFile )
+                        param ( $thisSource, $Definitions, $LogFile )
                         Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
                         ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
-                        $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
+                        $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ExpectedTPUT $Definitions.NDKPerf.TPUT
                        
                         $Result = New-Object -TypeName psobject
                         $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
@@ -1077,7 +1076,6 @@ Function Test-NetStack {
 
                     $param = @{
                         thisSource = $thisSource
-                        ClientNodes = $ClientNodes
                         Definitions = $Definitions
                         LogFile = $LogFile
                     }
