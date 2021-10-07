@@ -115,3 +115,62 @@ function Invoke-TCP {
 
     Return $TCPResults
 }
+
+function UDP {
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true, Position=0)]
+        [PSObject] $Server,
+
+        [Parameter(Mandatory=$true, Position=1)]
+        [string] $DpdkUser,
+
+        [Parameter(Mandatory=$true, Position=2)]
+        [string] $DpdkIp,
+
+	[Parameter(Mandatory=$true, Position=3)]
+        [string] $DpdkNode
+    )
+
+    # This test requires the admin to have a DPDK enabled Linux VM setup that has pktgen installed.
+    # The VM must be able to connect to each node that will be tested, and should have each node able to ssh to the VM without using a password.
+    # The test will fail if a password is required to connect to the VM.  
+    # The dpdk user must also be able to execute sudo commands without entering a password.
+
+    $UDPBlastResults = New-Object -TypeName psobject
+
+    $ServerCounter += Start-Job -ScriptBlock {
+        param ([string] $Server)
+        $paths = (Get-Counter -ListSet UDPv4).paths
+        Get-Counter -ComputerName $Server.NodeName -Counter $paths -MaxSamples 20
+    } -ArgumentList $Server
+
+    $ServerOutput += Start-Job -ScriptBlock {
+        param ([PSObject] $Server, [string] $DpdkIp, [string] $DpdkUser, [string] $DpdkNode)
+	Write-Host $Server
+	$MacAddress=$(Get-NetAdapter $Server.InterfaceAlias | Select-Object -ExpandProperty MacAddress)
+	Write-Host $Server.InterfaceIndex
+	$MacAddress=$MacAddress -Split "-" -Join ":"
+	Write-Host $MacAddress
+        Invoke-Command -Computername $DpdkNode -ScriptBlock {
+            param ([PSObject] $Server, [string] $DpdkIp, [string] $DpdkUser)
+	    $InsideCommand="printf 'set all proto udp\nset all size 1518\nset all dst ip $($Server.IPAddress)\nset all dst mac $MacAddress\nset all dport 8888\n start all\ndelay 50000\nstop all\nquit' > /home/b/test.pkt.sequences.test && sudo pktgen -l 1-8 -- -m '[2:3-7].0' -P -f /home/b/test.pkt.sequences.test" 
+	    ssh $DpdkUser@$DpdkIp $InsideCommand
+        } -ArgumentList $Server,$DpdkIp,$DpdkUser
+    } -ArgumentList $Server,$DpdkIp,$DpdkUser,$DpdkNode
+
+    $j++
+
+    $ServerOutput = Receive-Job $ServerOutput -Wait -AutoRemoveJob
+    $ServerCounter = Receive-Job $ServerCounter -Wait -AutoRemoveJob
+    Write-Host $ServerCounter
+    $RawData = New-Object -TypeName psobject
+    $RawData | Add-Member -MemberType NoteProperty -Name ServerBytesPerSecond -Value $ServerBpsArray
+    $RawData | Add-Member -MemberType NoteProperty -Name MinLinkSpeedBps -Value $MinAcceptableLinkSpeedBps
+
+    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RxGbps -Value $ServerGbpsArray
+    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name ServerSuccess -Value $ServerSuccess
+    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RawData -Value $RawData
+
+    Return $UDPBlastResults
+}

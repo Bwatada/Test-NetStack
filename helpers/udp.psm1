@@ -1,8 +1,4 @@
-# This test requires the admin to have a DPDK enabled Linux VM setup that has pktgen installed.
-# The VM must be able to connect to each node that will be tested, and should have each node able to ssh to the VM without using a password.
-# The test will fail if a password is required to connect to the VM.  
-
-function Invoke-UDPBlast {
+function UDP {
     [CmdletBinding()]
     param (
         [Parameter(Mandatory=$true, Position=0)]
@@ -14,6 +10,10 @@ function Invoke-UDPBlast {
         [Parameter(Mandatory=$true, Position=2)]
         [PSObject] $DpdkIp
     )
+
+    # This test requires the admin to have a DPDK enabled Linux VM setup that has pktgen installed.
+    # The VM must be able to connect to each node that will be tested, and should have each node able to ssh to the VM without using a password.
+    # The test will fail if a password is required to connect to the VM.  
 
     $UDPBlastResults = New-Object -TypeName psobject
 
