@@ -109,7 +109,7 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false, ParameterSetName = 'OnlyConMapNodes'   , position = 0)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes', position = 0)]
         [ValidateScript({[System.Uri]::CheckHostName($_) -eq 'DNS'})]
-        [ValidateCount(2, 16)]
+        [ValidateCount(1, 16)]
         [String[]] $Nodes,
 
         [Parameter(Mandatory = $true, ParameterSetName = 'IPAddress'            , position = 0)]
@@ -155,7 +155,14 @@ Function Test-NetStack {
         [Parameter(Mandatory = $false, ParameterSetName = 'OnlyPrereqIPTarget'   , position = 4)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesNodes'   , position = 4)]
         [Parameter(Mandatory = $false, ParameterSetName = 'RevokeFWRulesIPTarget', position = 4)]
+
         [Switch] $Experimental = $false,
+        [Parameter(Mandatory = $false)]
+        [String] $DpdkUser='',
+        [Parameter(Mandatory = $false)]
+        [String[]] $DpdkPortIps ='',
+	[Parameter(Mandatory = $false)]
+        [String] $DpdkNode='',
 
         [Parameter(Mandatory = $false)]
         [String] $LogPath = "$(Join-Path -Path $((Get-Module -Name Test-Netstack -ListAvailable | Select-Object -First 1).ModuleBase) -ChildPath "Results\NetStackResults-$(Get-Date -f yyyy-MM-dd-HHmmss).txt")"
@@ -1013,18 +1020,42 @@ Function Test-NetStack {
         }
 
         '8' { # UDP Stress N:1
+
+            if ($Experimental -eq $false) {
+                Write-Error "Stage $_ is experimental. The experimental flag has not been set. Please enable it to run experimental stages."
+                "The experimental stage(s) $ChosenStages have been selected to be run, but the experimental flag has not been set. Please enable it to run experimental stages." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                return $NetStackResults
+            }
+
+            if ($DpdkUser -eq '' -or $DpdkPortIps -eq '' -or $DpdkNode -eq '') {
+                Write-Error "Stage 8 requires a valid Linux VM to connect to and run DPDK. Please provide the IP of the vm and the username to connect with."
+                "Stage 8 requires a valid Linux VM to connect to and run DPDK. Please provide the IP of the vm and the username to connect with."  | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                return $NetStackResults
+            }
+
             if ( $ContinueOnFailure -eq $false ) {
                 if ('fail' -in $NetStackResults.Stage3.PathStatus -or 'fail' -in $NetStackResults.Stage4.PathStatus -or 'fail' -in $NetStackResults.Stage5.ReceiverStatus -or 'fail' -in $NetStackResults.Stage6.NetworkStatus) {
-    
                     $Stage -ge 8 | ForEach-Object {
                         $AbortedStage = $_
                         $NetStackResults | Add-Member -MemberType NoteProperty -Name "Stage$AbortedStage" -Value 'Aborted'; $StageFailures++
                     }
-    
                     Write-Warning 'Aborted due to failures in earlier stage(s). To continue despite failures, use the ContinueOnFailure parameter.'
                     return $NetStackResults
                 }
             }
+
+	        $IsVDiskUnhealthy = Get-VDiskStatus($LogFile)
+            if ($IsVDiskUnhealthy) { 
+                $Stage -ge 8 | ForEach-Object {
+                    $AbortedStage = $_
+                    $NetStackResults | Add-Member -MemberType NoteProperty -Name "Stage$AbortedStage" -Value 'Aborted'; $StageFailures++
+                }
+                Write-Warning 'Aborted due to unhealthy VDisk.' | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            }
+
+	        $ISS = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
+            $NetStackHelperModules = Get-ChildItem (Join-Path -Path $PSScriptRoot -ChildPath 'Helpers\*') -Include '*.psm1'
+            $NetStackHelperModules | ForEach-Object { $ISS.ImportPSModule($_.FullName) }
 
             $NodeGroups = $Mapping | Where-Object VLAN -ne 'Unsupported' | Group-Object NodeName
             $thisStage = $_
@@ -1034,85 +1065,35 @@ Function Test-NetStack {
             "Beginning Stage: $thisStage - UDP Traffic Stress Test - $([System.DateTime]::Now)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
             $StageResults = @()
-            $ISS = [System.Management.Automation.Runspaces.InitialSessionState]::CreateDefault()
-            $NetStackHelperModules = Get-ChildItem (Join-Path -Path $PSScriptRoot -ChildPath 'Helpers\*') -Include '*.psm1'
-            $NetStackHelperModules | ForEach-Object { $ISS.ImportPSModule($_.FullName) }
-
             $NodeGroups | ForEach-Object {
-                $GroupedJobs = @()            
-                $RunspacePool = [runspacefactory]::CreateRunspacePool(1, $MaxRunspaces, $ISS, $host)
-                $RunspacePool.Open()
                 $testNodeGroup = $_  
-                $testNodeGroup.Group | Where-Object -FilterScript { $_.RDMAEnabled } | ForEach-Object {
-                    
-                    $thisSource  = $_
-                    $PowerShell = [powershell]::Create()
-                    $PowerShell.RunspacePool = $RunspacePool
-                    $ClientNodes = @($Mapping | Where-Object NodeName -ne $thisSource.NodeName | Where-Object VLAN -eq $thisSource.VLAN | Where-Object Subnet -eq $thisSource.Subnet | Where-Object -FilterScript { $_.RDMAEnabled })
-                    
-                    [void] $PowerShell.AddScript({
-                        param ( $thisSource, $ClientNodes, $Definitions, $LogFile )
-                        Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
-                        ":: $([System.DateTime]::Now) :: [Started] UDP Test -> Interface $($thisTarget.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-
-                        $thisSourceResult = Invoke-UDPBlast -Server $thisSource -ClientNetwork $ClientNodes -ExpectedTPUT $Definitions.NDKPerf.TPUT
-                       
-                        $Result = New-Object -TypeName psobject
-                        $Result | Add-Member -MemberType NoteProperty -Name ReceiverHostName -Value $thisSource.NodeName
-                        $Result | Add-Member -MemberType NoteProperty -Name Receiver -Value $thisSource.IPAddress
-                        $Result | Add-Member -MemberType NoteProperty -Name RxLinkSpeedGbps -Value $thisSourceResult.ReceiverLinkSpeedGbps
-                        $Result | Add-Member -MemberType NoteProperty -Name RxGbps -Value $thisSourceResult.RxGbps
-        
-                        if ($thisSourceResult.ServerSuccess) { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass' }
-                        else { $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' }
-        
-                        $Result | Add-Member -MemberType NoteProperty -Name ClientNetworkTested -Value $thisSourceResult.ClientNetworkTested
-                        $Result | Add-Member -MemberType NoteProperty -Name RawData -Value $thisSourceResult.RawData
-                        
-                        Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))"
-                        ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> Interface $($thisSource.InterfaceIndex) ($($thisSource.IPAddress))" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-                        
-                        return $Result
-                    })
-
-                    $param = @{
-                        thisSource = $thisSource
-                        ClientNodes = $ClientNodes
-                        Definitions = $Definitions
-                        LogFile = $LogFile
-                    }
-
-                    [void] $PowerShell.AddParameters($param)
-
-                    $asyncJobObj = @{ JobHandle   = $PowerShell
-                        AsyncHandle = $PowerShell.BeginInvoke() }
-
-                    $GroupedJobs += $asyncJobObj 
-                
+                $VNics=$testNodeGroup.Group | Where-Object -FilterScript { $_.RDMAEnabled }
+                Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> $($VNics[0].NodeName)"
+                ":: $([System.DateTime]::Now) :: [Started] UDP Test -> $($testNodeGroup[0].NodeName)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                $thisSourceResult = UDP -VNics $VNics -DpdkPortIps $DpdkPortIps -DpdkUser $DpdkUser -DpdkNode $DpdkNode
+                            
+                if ($thisSourceResult.MembershipLostEvents.count -gt 0) { 
+                    Write-Host "Found cluster membership lost events when testing node $($thisSource.NodeName). They can be found in the test log."
+                    "Found cluster membership lost events when testing node $($thisSource.NodeName). They can be found in the test log." | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                    $thisSourceResult.MembershipLostEvents | Select-Object Time, EntryType, InstanceID, Message | Format-Table -AutoSize | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                    $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' 
+                } else {
+                    $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Pass'
                 }
 
-                While ($null -ne $GroupedJobs) {
-                    $GroupedJobs | Where-Object { $_.AsyncHandle.IsCompleted } | ForEach-Object {
-                        $thisJob = $_
-                        $StageResults += $thisJob.JobHandle.EndInvoke($thisJob.AsyncHandle)
-                        
-                        $GroupedJobs = $GroupedJobs | Where-Object { $_ -ne $thisJob }
-                    }
-                }
-
-                $RunspacePool.close()
-                $RunspacePool.Dispose()
-                
+                Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> $($VNics[0].NodeName)"
+                ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> $($VNics[0].NodeName)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+                $StageResults += $Result
             }
 
-            if ('Fail' -in $StageResults.ReceiverStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Fail'; $StageFailures++ }
-            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage7 -Value 'Pass' }
-            
-            $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage7 -Value $StageResults
+            if ('Fail' -in $StageResults.TestStatus) { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage8 -Value 'Fail'; $StageFailures++ }
+            else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name Stage8 -Value 'Pass' }
+         
+	        $NetStackResults | Add-Member -MemberType NoteProperty -Name Stage8 -Value $StageResults
             Write-Host "Completed Stage: $thisStage - RDMA Perf VMSwitch Stress - $([System.DateTime]::Now)`r`n"
-            "Completed Stage: $thisStage - RDMA Perf VMSwitch Stress - $([System.DateTime]::Now)`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            "Completed Stage: $thisStage - UDP Stress - $([System.DateTime]::Now)`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
             "Stage 8 Results" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-            $StageResults | Select-Object -Property * -ExcludeProperty RawData | ft * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            $StageResults | Select-Object -Property * -ExcludeProperty RawData | Format-Table * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
             "####################################`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
         }
     }
@@ -1121,7 +1102,7 @@ Function Test-NetStack {
     else { $ResultsSummary | Add-Member -MemberType NoteProperty -Name NetStack -Value 'Pass' }
 
     "Net Stack Results" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
-    $ResultsSummary | ft * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+    $ResultsSummary | Format-Table * | Out-File $LogFile -Append -Encoding utf8 -Width 2000
     "####################################`r`n" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
 
     $NetStackResults | Add-Member -MemberType NoteProperty -Name ResultsSummary -Value $ResultsSummary
@@ -1131,6 +1112,7 @@ Function Test-NetStack {
         $NetStackResults | Add-Member -MemberType NoteProperty -Name Failures -Value $Failures
         Write-RecommendationsToLogFile -NetStackResults $NetStackResults -LogFile $LogFile
     }
+
     Write-Verbose "Log file stored at: $LogPath"
 
     Return $NetStackResults
