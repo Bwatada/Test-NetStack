@@ -1048,7 +1048,7 @@ Function Test-NetStack {
 
 	    $IsVDiskUnhealthy = Get-VDiskStatus($LogFile)
             if ($IsVDiskUnhealthy) { 
-                $Stage -ge 7 | ForEach-Object {
+                $Stage -ge 8 | ForEach-Object {
                     $AbortedStage = $_
                     $NetStackResults | Add-Member -MemberType NoteProperty -Name "Stage$AbortedStage" -Value 'Aborted'; $StageFailures++
                 }
@@ -1069,6 +1069,7 @@ Function Test-NetStack {
 
             $StageResults = @()
             $NodeGroups | ForEach-Object {
+		$Result = New-Object -TypeName psobject
                 $testNodeGroup = $_  
                 $VNics=$testNodeGroup.Group | Where-Object -FilterScript { $_.RDMAEnabled }
                 Write-Host ":: $([System.DateTime]::Now) :: [Started] UDP Test -> $($VNics[0].NodeName)"
@@ -1087,6 +1088,13 @@ Function Test-NetStack {
                 Write-Host ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> $($VNics[0].NodeName)"
                 ":: $([System.DateTime]::Now) :: [Completed] UDP Test -> $($VNics[0].NodeName)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
            	Write-Host $Result
+		$IsVDiskUnhealthy = Get-VDiskStatus($LogFile)
+
+            	if ($IsVDiskUnhealthy) { 
+		    $Result | Add-Member -MemberType NoteProperty -Name ReceiverStatus -Value 'Fail' 
+		    Write-Host "VDisk became unhealthy while testing $($VNics[0].NodeName)"	
+                    Write-Warning "VDisk became unhealthy while testing $($VNics[0].NodeName)" | Out-File $LogFile -Append -Encoding utf8 -Width 2000
+            	}
                 $StageResults += $Result
             }
 

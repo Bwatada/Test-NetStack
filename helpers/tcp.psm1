@@ -174,7 +174,12 @@ function UDP {
 
     $ServerOutput = Receive-Job $ServerOutput -Wait -AutoRemoveJob
     $Events = Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ErrorAction SilentlyContinue
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name MembershipLostEvents -Value $Events.Readings
+    Write-Host $Events
+    if ($Events.length -gt 0) {
+    	$UDPBlastResults | Add-Member -MemberType NoteProperty -Name MembershipLostEvents -Value $Events
+    } else {
+	$UDPBlastResults | Add-Member -MemberType NoteProperty -Name MembershipLostEvents -Value @()
+    }
 
     Return $UDPBlastResults
 }
