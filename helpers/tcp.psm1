@@ -119,58 +119,74 @@ function Invoke-TCP {
 function UDP {
     [CmdletBinding()]
     param (
-        [Parameter(Mandatory=$true, Position=0)]
-        [PSObject] $Server,
 
-        [Parameter(Mandatory=$true, Position=1)]
+	# It is expected that any test using stage 8 will only have 2 vnics. The logic in this function assumes that there will
+	# never be more or less than that number. The linux vm will have a virtual function that corresponds with the IP Address of 
+	# one vNIC. 
+
+	[Parameter(Mandatory=$true)]
+	[PSObject[]] $VNics,
+
+        [Parameter(Mandatory=$true)]
         [string] $DpdkUser,
 
-        [Parameter(Mandatory=$true, Position=2)]
-        [string] $DpdkIp,
+        [Parameter(Mandatory=$true)]
+        [string[]] $DpdkPortIps,
 
-	[Parameter(Mandatory=$true, Position=3)]
+	[Parameter(Mandatory=$true)]
         [string] $DpdkNode
     )
 
     # This test requires the admin to have a DPDK enabled Linux VM setup that has pktgen installed.
-    # The VM must be able to connect to each node that will be tested, and should have each node able to ssh to the VM without using a password.
+    # The VM must be able to connect to each node that will be tested and each interface, and should have each node able to ssh to the VM without using a password.
     # The test will fail if a password is required to connect to the VM.  
     # The dpdk user must also be able to execute sudo commands without entering a password.
 
     $UDPBlastResults = New-Object -TypeName psobject
 
-    $ServerCounter += Start-Job -ScriptBlock {
-        param ([string] $Server)
-        $paths = (Get-Counter -ListSet UDPv4).paths
-        Get-Counter -ComputerName $Server.NodeName -Counter $paths -MaxSamples 20
-    } -ArgumentList $Server
+    $OrderedIps = @()
+    $MacAddresses = @()
+    $DpdkPortIps | foreach {
+	$Port = $_
+	$VNics | foreach {
+	    $nsplit = $_.IPAddress.Split(".")
+	    $isplit = $Port.Split(".")
+	    if ($nsplit[2] -eq $isplit[2]) {
+		$OrderedIps += $_.IPAddress
+		$MacAddresses += $_.MacAddress -Split "-" -Join ":"
+	    }
+	}
+    }
+
+    $AddressPairs = Select-Zip -First $OrderedIps -Second $MacAddresses
 
     $ServerOutput += Start-Job -ScriptBlock {
-        param ([PSObject] $Server, [string] $DpdkIp, [string] $DpdkUser, [string] $DpdkNode)
-	Write-Host $Server
-	$MacAddress=$(Get-NetAdapter $Server.InterfaceAlias | Select-Object -ExpandProperty MacAddress)
-	Write-Host $Server.InterfaceIndex
-	$MacAddress=$MacAddress -Split "-" -Join ":"
-	Write-Host $MacAddress
+        param ([string[][]] $AddressPairs, [string] $DpdkUser, [string] $DpdkNode, [string[]] $DpdkPortIps)
         Invoke-Command -Computername $DpdkNode -ScriptBlock {
-            param ([PSObject] $Server, [string] $DpdkIp, [string] $DpdkUser)
-	    $InsideCommand="printf 'set all proto udp\nset all size 1518\nset all dst ip $($Server.IPAddress)\nset all dst mac $MacAddress\nset all dport 8888\n start all\ndelay 50000\nstop all\nquit' > /home/b/test.pkt.sequences.test && sudo pktgen -l 1-8 -- -m '[2:3-7].0' -P -f /home/b/test.pkt.sequences.test" 
-	    ssh $DpdkUser@$DpdkIp $InsideCommand
-        } -ArgumentList $Server,$DpdkIp,$DpdkUser
-    } -ArgumentList $Server,$DpdkIp,$DpdkUser,$DpdkNode
-
-    $j++
+            param ([string[][]] $AddressPairs, [string] $DpdkUser, [string[]] $DpdkPortIps)
+	    $port = 0
+	    $InsideCommand="printf 'set all proto udp\nset all size 1518\nset all dport 8888\n" 
+	    $AddressPairs | ForEach-Object { $InsideCommand += "set $port dst ip $($_[0])\nset $port dst mac $($_[1])\n"; $port += 1 }
+	    $InsideCommand += "start all\ndelay 50000\nstop all\nquit' > /home/$DpdkUser/test.pkt.sequences.test && sudo pktgen -l 1-8 -- -m '[2:3-5].0, [6:7].1' -P -f /home/$DpdkUser/test.pkt.sequences.test"
+	    ssh $DpdkUser@$($DpdkPortIps[0]) $InsideCommand
+        } -ArgumentList $AddressPairs,$DpdkUser,$DpdkPortIps
+    } -ArgumentList $AddressPairs,$DpdkUser,$DpdkNode,$DpdkPortIps
 
     $ServerOutput = Receive-Job $ServerOutput -Wait -AutoRemoveJob
-    $ServerCounter = Receive-Job $ServerCounter -Wait -AutoRemoveJob
-    Write-Host $ServerCounter
-    $RawData = New-Object -TypeName psobject
-    $RawData | Add-Member -MemberType NoteProperty -Name ServerBytesPerSecond -Value $ServerBpsArray
-    $RawData | Add-Member -MemberType NoteProperty -Name MinLinkSpeedBps -Value $MinAcceptableLinkSpeedBps
-
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RxGbps -Value $ServerGbpsArray
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name ServerSuccess -Value $ServerSuccess
-    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name RawData -Value $RawData
+    $Events = Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ErrorAction SilentlyContinue
+    $UDPBlastResults | Add-Member -MemberType NoteProperty -Name MembershipLostEvents -Value $Events.Readings
 
     Return $UDPBlastResults
+}
+
+
+function Select-Zip {
+    [CmdletBinding()]
+    Param(
+        $First,
+        $Second,
+        $ResultSelector = { ,$args }
+    )
+
+    [System.Linq.Enumerable]::Zip($First, $Second, [Func[Object, Object, Object[]]]$ResultSelector)
 }
