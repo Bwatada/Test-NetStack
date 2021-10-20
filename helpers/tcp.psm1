@@ -161,6 +161,7 @@ function UDP {
 
     $AddressPairs = Select-Zip -First $OrderedIps -Second $MacAddresses
 
+    $StartTime = Get-Date
     $ServerOutput += Start-Job -ScriptBlock {
         param ([string[][]] $AddressPairs, [string] $DpdkUser, [string] $DpdkNode, [string[]] $DpdkPortIps)
         Invoke-Command -Computername $DpdkNode -ScriptBlock {
@@ -174,7 +175,7 @@ function UDP {
     } -ArgumentList $AddressPairs,$DpdkUser,$DpdkNode,$DpdkPortIps
 
     $ServerOutput = Receive-Job $ServerOutput -Wait -AutoRemoveJob
-    $Events = Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ErrorAction SilentlyContinue
+    $Events = Get-EventLog System -InstanceId 0x466,0x467,0x469,0x46a -ErrorAction SilentlyContinue -After $StartTime
     $UDPBlastResults | Add-Member -MemberType NoteProperty -Name MembershipLostEvents -Value $Events.Readings
 
     Return $UDPBlastResults
